@@ -1,1 +1,0 @@
-# Neuromorphic-Video-Anomaly-Detection
