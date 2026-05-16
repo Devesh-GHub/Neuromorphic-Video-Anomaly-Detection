@@ -342,8 +342,11 @@ def batch_convert(input_base_dir: Path,
         print(f"Error: Directory not found: {split_dir}")
         return []
     
-    # Find all video directories
-    video_dirs = sorted([d for d in split_dir.iterdir() if d.is_dir()])
+    # Find all video directories, excluding ground-truth annotation folders
+    video_dirs = sorted([
+        d for d in split_dir.iterdir()
+        if d.is_dir() and not d.name.endswith('_gt')
+    ])
     
     if max_videos is not None:
         video_dirs = video_dirs[:max_videos]
