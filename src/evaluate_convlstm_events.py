@@ -35,7 +35,7 @@ def compute_anomaly_scores(model, dataloader, device, use_amp):
         for batch_idx, spikes in enumerate(dataloader):
             x = spikes.permute(0, 4, 1, 2, 3).contiguous().to(device, non_blocking=True)
 
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.amp.autocast('cuda', enabled=use_amp):
                 output = model(x)
 
             # Cast to float32 before subtraction (AMP produces FP16 output)

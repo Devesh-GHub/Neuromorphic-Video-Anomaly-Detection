@@ -40,7 +40,7 @@ def train_one_epoch(model, dataloader, optimizer, criterion, scaler, use_amp):
 
         optimizer.zero_grad(set_to_none=True)   # faster than zero_grad()
 
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with torch.amp.autocast('cuda', enabled=use_amp):
             output = model(x)
             loss = criterion(output, x)
 
@@ -128,7 +128,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epochs, eta_min=1e-5
     )
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     best_loss = float('inf')

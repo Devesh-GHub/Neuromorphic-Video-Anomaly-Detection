@@ -1,6 +1,7 @@
 import yaml
 import os
 import sys
+import time
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -19,117 +20,133 @@ def load_config(config_path):
         return yaml.safe_load(f)
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device):
-    model.train()
-    total_loss = 0.0
-
-    for sequences in dataloader:
-        sequences = sequences.to(device)   # (B, T, C, H, W)
-
-        output = model(sequences)
-        loss = criterion(output, sequences)
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        total_loss += loss.item()
-
-    return total_loss / len(dataloader)
-
-
 def main():
-    # -----------------------
-    # Load config
-    # -----------------------
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, "../configs/default.yaml")
     config = load_config(config_path)
 
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    print("Using device:", DEVICE)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_amp = device.type == "cuda"
+    print(f"Device: {device}  |  AMP: {use_amp}")
 
-    # -----------------------
-    # Dataset (SEQUENCES)
-    # -----------------------
+    # Picks fastest cuDNN kernel for each conv shape
+    torch.backends.cudnn.benchmark = True
+
+    # ------------------------------------------------------------------ data
     train_videos, _ = load_ucsd_ped2(config["data"]["root_dir"])
-
     transform = get_transform(config["data"]["image_size"])
-
-    sequence_length = config["training"].get("sequence_length", 8)
+    seq_len = config["training"].get("sequence_length", 8)
 
     train_dataset = VideoSequenceDataset(
-        train_videos,
-        sequence_length=sequence_length,
-        transform=transform
+        train_videos, sequence_length=seq_len, transform=transform
     )
 
+    use_workers = sys.platform != "win32"
+    num_workers = 2 if use_workers else 0
     train_loader = DataLoader(
         train_dataset,
-        batch_size=config["training"]["batch_size"],  # recommend 4–8
+        batch_size=config["training"]["batch_size"],
         shuffle=True,
-        num_workers=0
+        num_workers=num_workers,
+        pin_memory=use_amp,
+        persistent_workers=use_workers,
+        prefetch_factor=2 if use_workers else None,
     )
 
-    # -----------------------
-    # Model
-    # -----------------------
+    # ----------------------------------------------------------------- model
     model = ConvLSTMAutoencoder(
         input_channels=3,
         hidden_dim=config["model"].get("hidden_dim", 64)
-    ).to(DEVICE)
+    ).to(device)
+
+    # Fuses the T-step LSTM loop, reduces Python dispatch overhead
+    if hasattr(torch, "compile"):
+        model = torch.compile(model)
+        print("  torch.compile() enabled")
+
+    print(f"Parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=config["training"]["learning_rate"]
+        model.parameters(), lr=config["training"]["learning_rate"]
     )
-
-    # -----------------------
-    # Logger
-    # -----------------------
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config["training"]["epochs"], eta_min=1e-5
+    )
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     logger = Logger(config["logging"]["log_dir"])
 
-    # -----------------------
-    # Training loop
-    # -----------------------
+    os.makedirs("checkpoints", exist_ok=True)
+    epochs = config["training"]["epochs"]
     global_step = 0
+    best_loss = float("inf")
 
-    for epoch in range(config["training"]["epochs"]):
+    print(f"\nTraining for {epochs} epochs  |  {len(train_loader)} batches/epoch")
+    print("=" * 60)
+
+    for epoch in range(epochs):
+        model.train()
+        t0 = time.time()
         epoch_loss = 0.0
 
         for sequences in train_loader:
-            sequences = sequences.to(DEVICE)
+            # non_blocking overlaps CPU→GPU transfer with compute
+            sequences = sequences.to(device, non_blocking=True)
 
-            output = model(sequences)
-            loss = criterion(output, sequences)
+            optimizer.zero_grad(set_to_none=True)   # faster than zero_grad()
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                output = model(sequences)
+                loss = criterion(output, sequences)
 
-            logger.log_loss(loss.item(), global_step)
-            logger.log_lr(optimizer, global_step)
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
 
-            global_step += 1
             epoch_loss += loss.item()
 
+            # Log every 10 steps — loss.item() forces a CUDA sync, keep it rare
+            if global_step % 10 == 0:
+                logger.log_loss(loss.item(), global_step)
+                logger.log_lr(optimizer, global_step)
+
+            global_step += 1
+
         avg_loss = epoch_loss / len(train_loader)
-        print(f"Epoch [{epoch+1}/{config['training']['epochs']}] - Loss: {avg_loss:.6f}")
+        scheduler.step()
+        elapsed = time.time() - t0
 
-        # Log reconstructed sequences (first batch only)
-        logger.log_images(sequences[:, 0], output[:, 0], epoch)
+        print(f"Epoch [{epoch+1}/{epochs}] ({elapsed:.1f}s) | "
+              f"Loss: {avg_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
 
-    # -----------------------
-    # Save model
-    # -----------------------
-    os.makedirs("checkpoints", exist_ok=True)
-    torch.save(
-        model.state_dict(),
-        "checkpoints/conv_lstm_autoencoder.pth"
-    )
+        logger.log_images(sequences[:, 0], output[:, 0].float(), epoch)
 
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            state = model._orig_mod.state_dict() \
+                if hasattr(model, "_orig_mod") else model.state_dict()
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": state,
+                "loss": best_loss,
+            }, "checkpoints/conv_lstm_autoencoder_best.pth")
+            print(f"  ✓ Best model saved (loss={best_loss:.6f})")
+
+        if (epoch + 1) % 10 == 0:
+            state = model._orig_mod.state_dict() \
+                if hasattr(model, "_orig_mod") else model.state_dict()
+            torch.save(state, f"checkpoints/conv_lstm_autoencoder_epoch{epoch+1}.pth")
+
+    state = model._orig_mod.state_dict() \
+        if hasattr(model, "_orig_mod") else model.state_dict()
+    torch.save(state, "checkpoints/conv_lstm_autoencoder.pth")
     logger.close()
+
+    print("\n" + "=" * 60)
+    print(f"TRAINING COMPLETE  |  Best loss: {best_loss:.6f}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
