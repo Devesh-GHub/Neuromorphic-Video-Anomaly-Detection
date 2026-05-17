@@ -18,30 +18,31 @@ from snntorch import surrogate
 
 class SNNEncoder(nn.Module):
     """Spiking convolutional encoder."""
-    
-    def __init__(self, in_channels=2, beta=0.95):
+
+    def __init__(self, in_channels=2, beta=0.95, bottleneck_channels=8):
         super().__init__()
-        
+
         # Surrogate gradient for backprop through spikes
         spike_grad = surrogate.atan(alpha=2.0)
-        
+
         # Encoder Layer 1: Conv 5×5, stride=2
-        # (B, 2, 128, 128) → (B, 64, 64, 64)
-        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=5, stride=2, padding=2)
-        self.bn1 = nn.BatchNorm2d(64)
+        # (B, 2, 128, 128) → (B, 128, 64, 64)
+        self.conv1 = nn.Conv2d(in_channels, 128, kernel_size=5, stride=2, padding=2)
+        self.bn1 = nn.BatchNorm2d(128)
         self.lif1 = snn.Leaky(beta=beta, spike_grad=spike_grad, learn_beta=True)
-        
+
         # Encoder Layer 2: Conv 3×3, stride=2
-        # (B, 64, 64, 64) → (B, 32, 32, 32)
-        self.conv2 = nn.Conv2d(64, 32, kernel_size=3, stride=2, padding=1)
-        self.bn2 = nn.BatchNorm2d(32)
+        # (B, 128, 64, 64) → (B, 64, 32, 32)
+        self.conv2 = nn.Conv2d(128, 64, kernel_size=3, stride=2, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
         self.lif2 = snn.Leaky(beta=beta, spike_grad=spike_grad, learn_beta=True)
-        
-        # Bottleneck: Conv 1×1
-        # (B, 32, 32, 32) → (B, 16, 32, 32)
-        self.conv3 = nn.Conv2d(32, 16, kernel_size=1)
-        self.bn3 = nn.BatchNorm2d(16)
+
+        # Bottleneck: Conv 1×1 — small channel count forces compression
+        # (B, 64, 32, 32) → (B, bottleneck_channels, 32, 32)
+        self.conv3 = nn.Conv2d(64, bottleneck_channels, kernel_size=1)
+        self.bn3 = nn.BatchNorm2d(bottleneck_channels)
         self.lif3 = snn.Leaky(beta=beta, spike_grad=spike_grad, learn_beta=True)
+        self.bottleneck_channels = bottleneck_channels
     
     def forward(self, x, mem1, mem2, mem3):
         """
@@ -79,21 +80,21 @@ class SNNEncoder(nn.Module):
 
 class SNNDecoder(nn.Module):
     """Spiking transposed convolutional decoder."""
-    
-    def __init__(self, out_channels=2, beta=0.95):
+
+    def __init__(self, out_channels=2, beta=0.95, bottleneck_channels=8):
         super().__init__()
-        
+
         spike_grad = surrogate.atan(alpha=2.0)
-        
+
         # Decoder Layer 1: TransConv 3×3, stride=2
-        # (B, 16, 32, 32) → (B, 32, 64, 64)
-        self.deconv1 = nn.ConvTranspose2d(16, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
+        # (B, bottleneck_channels, 32, 32) → (B, 64, 64, 64)
+        self.deconv1 = nn.ConvTranspose2d(bottleneck_channels, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn1 = nn.BatchNorm2d(64)
         self.lif1 = snn.Leaky(beta=beta, spike_grad=spike_grad, learn_beta=True)
-        
+
         # Decoder Layer 2: TransConv 5×5, stride=2
-        # (B, 32, 64, 64) → (B, 2, 128, 128)
-        self.deconv2 = nn.ConvTranspose2d(32, out_channels, kernel_size=5, stride=2, padding=2, output_padding=1)
+        # (B, 64, 64, 64) → (B, out_channels, 128, 128)
+        self.deconv2 = nn.ConvTranspose2d(64, out_channels, kernel_size=5, stride=2, padding=2, output_padding=1)
         self.bn2 = nn.BatchNorm2d(out_channels)
         self.lif2 = snn.Leaky(beta=beta, spike_grad=spike_grad, learn_beta=True)
     
@@ -127,25 +128,32 @@ class SNNDecoder(nn.Module):
 class SNNAutoencoder(nn.Module):
     """
     Complete SNN Autoencoder for event-based anomaly detection.
-    
+
     Uses Leaky Integrate-and-Fire (LIF) neurons with surrogate
     gradient descent for end-to-end training.
-    
+
     Architecture:
         Input:  (B, 2, 128, 128) per timestep
-        Enc1:   Conv2d(2→64, 5×5, s=2) + LIF → (B, 64, 64, 64)
-        Enc2:   Conv2d(64→32, 3×3, s=2) + LIF → (B, 32, 32, 32)
-        Bottleneck: Conv2d(32→16, 1×1) + LIF → (B, 16, 32, 32)
-        Dec1:   ConvTranspose2d(16→32, 3×3, s=2) + LIF → (B, 32, 64, 64)
-        Dec2:   ConvTranspose2d(32→2, 5×5, s=2) + LIF → (B, 2, 128, 128)
+        Enc1:   Conv2d(2→128, 5×5, s=2) + LIF → (B, 128, 64, 64)
+        Enc2:   Conv2d(128→64, 3×3, s=2) + LIF → (B, 64, 32, 32)
+        Bottleneck: Conv2d(64→B, 1×1) + LIF  → (B, bottleneck_channels, 32, 32)
+        Dec1:   ConvTranspose2d(B→64, 3×3, s=2) + LIF → (B, 64, 64, 64)
+        Dec2:   ConvTranspose2d(64→2, 5×5, s=2) + LIF → (B, 2, 128, 128)
+
+    bottleneck_channels controls compression. Smaller = harder to reconstruct
+    anomalies = higher anomaly scores. Default 8 (vs old 32) forces the model
+    to only efficiently encode patterns seen in training (normal pedestrians).
     """
-    
-    def __init__(self, in_channels=2, beta=0.95, num_steps=25):
+
+    def __init__(self, in_channels=2, beta=0.95, num_steps=25, bottleneck_channels=8):
         super().__init__()
-        
+
         self.num_steps = num_steps
-        self.encoder = SNNEncoder(in_channels=in_channels, beta=beta)
-        self.decoder = SNNDecoder(out_channels=in_channels, beta=beta)
+        self.bottleneck_channels = bottleneck_channels
+        self.encoder = SNNEncoder(in_channels=in_channels, beta=beta,
+                                  bottleneck_channels=bottleneck_channels)
+        self.decoder = SNNDecoder(out_channels=in_channels, beta=beta,
+                                  bottleneck_channels=bottleneck_channels)
     
     def forward(self, x):
         """
@@ -237,12 +245,13 @@ class SNNAutoencoder(nn.Module):
 # HELPER FUNCTIONS
 # ============================================================================
 
-def create_default_snn(num_steps=25, beta=0.95):
+def create_default_snn(num_steps=25, beta=0.95, bottleneck_channels=8):
     """Create SNN autoencoder with default config for UCSD Ped2."""
     return SNNAutoencoder(
         in_channels=2,
         beta=beta,
-        num_steps=num_steps
+        num_steps=num_steps,
+        bottleneck_channels=bottleneck_channels
     )
 
 

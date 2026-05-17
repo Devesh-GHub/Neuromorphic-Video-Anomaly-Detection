@@ -138,6 +138,9 @@ def main():
                         help='Weight on rate homeostasis loss vs. MSE.')
     parser.add_argument('--encoding', type=str, default='rate',
                         choices=['rate', 'temporal', 'count'])
+    parser.add_argument('--bottleneck_channels', type=int, default=8,
+                        help='Bottleneck channel count. Smaller = more compression = '
+                             'harder to reconstruct anomalies. Default 8.')
     parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints')
     parser.add_argument('--image_size', type=int, default=128)
     
@@ -171,7 +174,8 @@ def main():
     model = SNNAutoencoder(
         in_channels=2,
         beta=args.beta,
-        num_steps=args.num_steps
+        num_steps=args.num_steps,
+        bottleneck_channels=args.bottleneck_channels
     ).to(device)
     
     print(f"Parameters: {count_parameters(model):,}")
