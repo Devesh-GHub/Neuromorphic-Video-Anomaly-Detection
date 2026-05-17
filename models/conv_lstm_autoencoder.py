@@ -58,24 +58,23 @@ class ConvLSTMAutoencoder(nn.Module):
         x: (B, T, C, H, W)
         """
         B, T, C, H, W = x.shape
+        hidden_dim = self.encoder.hidden_dim
 
         h, c = self._init_hidden(B, H, W, x.device)
 
-        encoded_seq = []
+        # Pre-allocate — avoids T list appends and a torch.stack call
+        enc_h = torch.zeros(B, T, hidden_dim, H, W, device=x.device)
+        output = torch.zeros(B, T, C, H, W, device=x.device)
 
-        # Encoder
         for t in range(T):
             h, c = self.encoder(x[:, t], h, c)
-            encoded_seq.append(h)
+            enc_h[:, t] = h
 
-        # Decoder
-        decoded_frames = []
         for t in range(T):
-            h, c = self.decoder(encoded_seq[t], h, c)
-            frame = self.output_layer(h)
-            decoded_frames.append(frame)
+            h, c = self.decoder(enc_h[:, t], h, c)
+            output[:, t] = self.output_layer(h)
 
-        return torch.stack(decoded_frames, dim=1)
+        return output
 
     def _init_hidden(self, B, H, W, device):
         h = torch.zeros(B, self.encoder.hidden_dim, H, W, device=device)
