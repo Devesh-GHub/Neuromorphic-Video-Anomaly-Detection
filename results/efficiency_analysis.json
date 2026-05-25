@@ -1,0 +1,74 @@
+{
+  "SNN Autoencoder": {
+    "parameters": 89251,
+    "cpu_ms": 514.5313510200049,
+    "cpu_std_ms": 73.18454097738591,
+    "gpu_peak_mb": 27.1,
+    "input_sparsity_pct": 90.0,
+    "layer_sparsity": {
+      "encoder.lif1": {
+        "spike_rate": 0.119,
+        "activity_pct": 11.9,
+        "sparsity_pct": 88.1,
+        "active_neurons": 62365,
+        "total_neurons": 524288
+      },
+      "encoder.lif2": {
+        "spike_rate": 0.3071,
+        "activity_pct": 30.71,
+        "sparsity_pct": 69.29,
+        "active_neurons": 20125,
+        "total_neurons": 65536
+      },
+      "encoder.lif3": {
+        "spike_rate": 0.2064,
+        "activity_pct": 20.64,
+        "sparsity_pct": 79.36,
+        "active_neurons": 1691,
+        "total_neurons": 8192
+      },
+      "decoder.lif1": {
+        "spike_rate": 0.1964,
+        "activity_pct": 19.64,
+        "sparsity_pct": 80.36,
+        "active_neurons": 51472,
+        "total_neurons": 262144
+      },
+      "decoder.lif2": {
+        "spike_rate": 0.2464,
+        "activity_pct": 24.64,
+        "sparsity_pct": 75.36,
+        "active_neurons": 8074,
+        "total_neurons": 32768
+      },
+      "decoder_output": {
+        "spike_rate": 0.1427,
+        "activity_pct": 14.27,
+        "sparsity_pct": 85.73
+      }
+    },
+    "overall_internal_sparsity_pct": 83.9,
+    "synops": 698328616,
+    "equiv_macs": 173539328,
+    "avg_spike_rate": 0.161,
+    "energy_uJ": 16061.558
+  },
+  "ConvAutoencoder": {
+    "parameters": 949475,
+    "cpu_ms": 42.0140597200043,
+    "cpu_std_ms": 2.916227140016765,
+    "gpu_peak_mb": 22.2,
+    "input_sparsity_pct": 0.0,
+    "macs": 914358272,
+    "energy_uJ": 182871.7
+  },
+  "ConvLSTM": {
+    "parameters": 449987,
+    "cpu_ms": 2211.3553081999817,
+    "cpu_std_ms": 275.9393259035158,
+    "gpu_peak_mb": 117.6,
+    "input_sparsity_pct": 0.0,
+    "macs": 88369790976,
+    "energy_uJ": 17673958.2
+  }
+}

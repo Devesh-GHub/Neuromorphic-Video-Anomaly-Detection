@@ -15,8 +15,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/.."))
 
 from preprocessing.load_datasets import load_ucsd_ped2
-from preprocessing.video_dataset import VideoFrameDataset
-from preprocessing.transforms import get_transform
+from preprocessing.motion_dataset import MotionFrameDataset
 from models.conv_autoencoder import ConvAutoencoder
 
 
@@ -36,8 +35,7 @@ def main():
     torch.backends.cudnn.benchmark = True
 
     train_videos, _ = load_ucsd_ped2(data_root)
-    transform = get_transform(IMAGE_SIZE)
-    train_dataset = VideoFrameDataset(train_videos, transform=transform)
+    train_dataset = MotionFrameDataset(train_videos, image_size=IMAGE_SIZE)
 
     use_workers = sys.platform != "win32"
     train_loader = DataLoader(

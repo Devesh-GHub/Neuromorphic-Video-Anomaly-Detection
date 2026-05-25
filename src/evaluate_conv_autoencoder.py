@@ -17,8 +17,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/.."))
 
 from preprocessing.load_datasets import load_ucsd_ped2
-from preprocessing.video_dataset import VideoFrameDataset
-from preprocessing.transforms import get_transform
+from preprocessing.motion_dataset import MotionFrameDataset
 from models.conv_autoencoder import ConvAutoencoder
 from utils.metrics import compute_auc_roc
 
@@ -78,8 +77,7 @@ def main():
     test_videos = sorted(v for v in all_test_videos if os.path.basename(v) in gt_folders)
     print(f"Test videos with GT: {len(test_videos)}")
 
-    transform = get_transform(IMAGE_SIZE)
-    test_dataset = VideoFrameDataset(test_videos, transform=transform)
+    test_dataset = MotionFrameDataset(test_videos, image_size=IMAGE_SIZE)
     test_loader = DataLoader(
         test_dataset,
         batch_size=BATCH_SIZE,

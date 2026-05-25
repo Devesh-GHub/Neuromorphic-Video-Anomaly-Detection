@@ -1,0 +1,6 @@
+{
+  "model": "ConvAutoencoder",
+  "image_size": 128,
+  "auc_roc": 0.8269390656010299,
+  "n_test_frames": 2010
+}

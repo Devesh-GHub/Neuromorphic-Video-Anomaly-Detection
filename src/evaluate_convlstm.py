@@ -100,8 +100,10 @@ def main():
     print(f"  Samples: {min_len}")
     print("=" * 60)
     
+    os.makedirs("results", exist_ok=True)
     np.save("results/convlstm_anomaly_scores.npy", scores)
-    
+    np.save("results/convlstm_ground_truth.npy", y_true)
+
     return auc
 
 
